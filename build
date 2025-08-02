@@ -1,0 +1,90 @@
+name: build
+
+on:
+  push:
+    branches: master
+    tags:
+      - '*'
+  pull_request:
+    branches: master
+
+jobs:
+  build:
+    name: Build Package
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        runtime: [linux-x64, linux-arm64, win-x64, win-arm64, osx-x64, osx-arm64]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Build
+      if: "!startsWith(github.ref, 'refs/tags/')"
+      run: dotnet build -r ${{ matrix.runtime }} -c Release
+
+    - name: Publish
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        dotnet publish -c Release -r ${{ matrix.runtime }} \
+          --self-contained \
+          -p:Version=${{ github.ref_name }} \
+          -o publish-output
+
+    - name: Rename executable for Windows
+      if: startsWith(github.ref, 'refs/tags/') && contains(matrix.runtime, 'win')
+      run: |
+        mkdir -p upeko-${{ matrix.runtime }}
+        cp publish-output/upeko.exe upeko-${{ matrix.runtime }}/upeko-${{ matrix.runtime }}.exe
+
+    - name: Rename executable for Linux/Mac
+      if: startsWith(github.ref, 'refs/tags/') && (contains(matrix.runtime, 'linux') || contains(matrix.runtime, 'osx'))
+      run: |
+        mkdir -p upeko-${{ matrix.runtime }}
+        cp publish-output/upeko upeko-${{ matrix.runtime }}/upeko-${{ matrix.runtime }}
+        chmod +x upeko-${{ matrix.runtime }}/upeko-${{ matrix.runtime }}
+
+    - name: Upload Artifact
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: actions/upload-artifact@v4
+      with:
+        name: upeko-${{ matrix.runtime }}
+        path: upeko-${{ matrix.runtime }}
+
+  create-release:
+    name: Create Release
+    needs:
+      - build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: 'upeko-*'
+          path: artifacts
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          name: upeko v${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/upeko-linux-x64/upeko-linux-x64
+            artifacts/upeko-linux-arm64/upeko-linux-arm64
+            artifacts/upeko-win-x64/upeko-win-x64.exe
+            artifacts/upeko-win-arm64/upeko-win-arm64.exe
+            artifacts/upeko-osx-x64/upeko-osx-x64
+            artifacts/upeko-osx-arm64/upeko-osx-arm64
